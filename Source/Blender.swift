@@ -10,8 +10,8 @@ import Foundation
 import UIKit
 
 /// A object that blends two images into one.
-public protocol Blender {
-	
+public protocol Blender : Printable, DebugPrintable  {
+	typealias FilterType: Filter
 	/// Warning: If this is changed, any currently blends using this image are canceled.
 	var firstImage: UIImage? { get set }
 	/// Warning: If this is changed, any currently blends using this image are canceled.
@@ -22,32 +22,32 @@ public protocol Blender {
 	var paused: Bool { get set }
 	
 	/// All filters this blender is capable of.
-	var avalableFilters: [BLNFilter] { get }
-	var currentlyBlending: [BLNFilter] { get }
+	var avalableProcesses: [BlendProcess] { get }
+	var currentlyBlending: [FilterType] { get }
 	
 	/// The Blender blends the two current images using the filter settings.
 	/// The success and failure blocks are called on the main thread.
 	/// The three forseeable reasons for failure are: 1. Low memory and 2. Changed scource images. 3. Canceled
 	/// If the blend is paused and never resumed, these blocks won't be called.
-	func blend(filter: BLNFilter, failure fail:((NSError?) -> ())?, success succeed:((blend: BLNBlend) -> ()))
+	func blend(#filter: FilterType, failure fail:((error: NSError) -> ())?, success succeed:((blend: Blend<FilterType>) -> ()))
 	
 	/// Cancels all blending.
 	func stop()
 	
 	/// Cancels these currently blending filters. If these filters are not blending, nothing happens.
-	func cancel(filters: [BLNFilter])
-	
+	func cancel(filters: [FilterType])
 }
 
 
 /// A blend of two images
-public struct BLNBlend: Hashable {
-	var image: UIImage
+public struct Blend<T:Filter>: Hashable {
 	
-	var filter: BLNFilter
-	var firstParentKey: Int
-	var secondParentKey: Int
-	var blenderName: String
+	public var image: UIImage
+	
+	public var filter: T
+	public var firstParentKey: Int
+	public var secondParentKey: Int
+	public var blenderName: String
 	
 	public var hashValue: Int {
 		// We don't need to hash the image because it's identity is made from it's other values.
@@ -55,125 +55,102 @@ public struct BLNBlend: Hashable {
 	}
 }
 
-public func == (lhs: BLNBlend, rhs:BLNBlend) -> Bool {
+public func == <T:Filter>(lhs: Blend<T>, rhs:Blend<T>) -> Bool {
 	return lhs.filter == rhs.filter
 		&& lhs.firstParentKey == rhs.firstParentKey
 		&& lhs.secondParentKey == rhs.secondParentKey
 }
 
-/// A percentage on [0,1]
-public typealias Intensity = CGFloat
-
-/// A specific filter with a name and intensity attached to it
-public enum BLNFilter: Hashable {
-	case    Dissolve(Intensity),
-			Darken(Intensity),
-			Multiply(Intensity),
-			ColorBurn(Intensity),
-			LinearBurn(Intensity),
-			Lighten(Intensity),
-			Screen(Intensity),
-			ColorDodge(Intensity),
-			Add(Intensity),
-			Overlay(Intensity),
-			SoftLight(Intensity),
-			HardLight(Intensity),
-			Difference(Intensity),
-			Exclusion(Intensity),
-			Subtract(Intensity),
-			Divide(Intensity),
-			Hue(Intensity),
-			Saturation(Intensity),
-			Color(Intensity),
-			Luminosity(Intensity)
+public struct Intensity: Hashable {
+	static public let range : Range<UInt> = Range<UInt>(start:0, end:100)
 	
-	func name() -> String {
-		var name: String
-		switch self {
-			case .Dissolve: name = "Dissolve"
-			case .Darken: name = "Darken"
-			case .Multiply: name = "Multiply"
-			case .ColorBurn: name = "ColorBurn"
-			case .LinearBurn: name = "LinearBurn"
-			case .Lighten: name = "Lighten"
-			case .Screen: name = "Screen"
-			case .ColorDodge: name = "ColorDodge"
-			case .Add: name = "Add"
-			case .Overlay: name = "Overlay"
-			case .SoftLight: name = "SoftLight"
-			case .HardLight: name = "HardLight"
-			case .Difference: name = "Difference"
-			case .Exclusion: name = "Exclusion"
-			case .Subtract: name = "Subtract"
-			case .Divide: name = "Divide"
-			case .Hue: name = "Hue"
-			case .Saturation: name = "Saturation"
-			case .Color: name = "Color"
-			case .Luminosity: name = "Luminosity"
-			default: name = "Unknown"
-		}
-		return name
+	public var value: UInt {
+		return _value
 	}
 	
-	var intensity: Intensity {
-		switch(self) {
-			case .Dissolve(let a): return a
-			case .Darken(let a): return a
-			case .Multiply(let a): return a
-			case .ColorBurn(let a): return a
-			case .LinearBurn(let a): return a
-			case .Lighten(let a): return a
-			case .Screen(let a): return a
-			case .ColorDodge(let a): return a
-			case .Add(let a): return a
-			case .Overlay(let a): return a
-			case .SoftLight(let a): return a
-			case .HardLight(let a): return a
-			case .Difference(let a): return a
-			case .Exclusion(let a): return a
-			case .Subtract(let a): return a
-			case .Divide(let a): return a
-			case .Hue(let a): return a
-			case .Saturation(let a): return a
-			case .Color(let a): return a
-			case .Luminosity(let a): return a
+	private var _value : UInt
+	
+	public var percentage : Float {
+		return Float(self.value) / 100.0
+	}
+	
+	public init() {
+		self._value = 0
+	}
+	
+	init(_ value: UInt) {
+		let tooSmall = value < Intensity.range.startIndex
+		let tooBig = value > Intensity.range.endIndex
+		
+		if !tooSmall && !tooBig {
+			self._value = value
+		} else if tooSmall {
+			self._value = Intensity.range.startIndex
+		} else { //tooBig
+			self._value = Intensity.range.endIndex
 		}
 	}
 	
-	/// MARK: hashable
 	public var hashValue: Int {
-		switch(self) {
-		default:
-			return self.intensity.hashValue ^ self.name().hashValue
-		}
+		return self.value.hashValue
 	}
 }
 
-// MARK: Equatable
-/// BLNFilters' must have the same type and same associated Intensity value.
-// This is the best way to equate them
-public func == (lhs: BLNFilter, rhs:BLNFilter) -> Bool {
-	switch(lhs,rhs) {
-		case (.Dissolve(let a), .Dissolve(let b)) where a == b: return true
-		case (.Darken(let a), .Darken(let b)) where a == b: return true
-		case (.Multiply(let a), .Multiply(let b)) where a == b: return true
-		case (.ColorBurn(let a), .ColorBurn(let b)) where a == b: return true
-		case (.LinearBurn(let a), .LinearBurn(let b)) where a == b: return true
-		case (.Lighten(let a), .Lighten(let b)) where a == b: return true
-		case (.Screen(let a), .Screen(let b)) where a == b: return true
-		case (.ColorDodge(let a), .ColorDodge(let b)) where a == b: return true
-		case (.Add(let a), .Add(let b)) where a == b: return true
-		case (.Overlay(let a), .Overlay(let b)) where a == b: return true
-		case (.SoftLight(let a), .SoftLight(let b)) where a == b: return true
-		case (.HardLight(let a), .HardLight(let b)) where a == b: return true
-		case (.Difference(let a), .Difference(let b)) where a == b: return true
-		case (.Exclusion(let a), .Exclusion(let b)) where a == b: return true
-		case (.Subtract(let a), .Subtract(let b)) where a == b: return true
-		case (.Divide(let a), .Divide(let b)) where a == b: return true
-		case (.Hue(let a), .Hue(let b)) where a == b: return true
-		case (.Saturation(let a), .Saturation(let b)) where a == b: return true
-		case (.Color(let a), .Color(let b)) where a == b: return true
-		case (.Luminosity(let a), .Luminosity(let b)) where a == b: return true
-		default: return false
+public func == (lhs: Intensity, rhs:Intensity) -> Bool {
+	return lhs.value == rhs.value
+}
+
+public protocol Filter: Hashable, Printable, DebugPrintable {
+	var type: BlendProcess { get }
+	var intensity: Intensity { get }
+}
+
+public func == <T:Filter>(lhs:T, rhs:T) -> Bool {
+	return lhs.type == rhs.type && lhs.intensity == rhs.intensity
+}
+
+public enum BlendProcess: String {
+	case Dissolve = "Dissolve",
+		Darken = "Darken",
+		Multiply = "Multiply",
+		ColorBurn = "ColorBurn",
+		LinearBurn = "LinearBurn",
+		Lighten = "Lighten",
+		Screen = "Screen",
+		ColorDodge = "ColorDodge",
+		Add = "Add",
+		Overlay = "Overlay",
+		SoftLight = "SoftLight",
+		HardLight = "HardLight",
+		Difference = "Difference",
+		Exclusion = "Exclusion",
+		Subtract = "Subtract",
+		Divide = "Divide",
+		Hue = "Hue",
+		Saturation = "Saturation",
+		Color = "Color",
+		Luminosity = "Luminosity"
+	
+	static var all: [BlendProcess] {
+		return [.Dissolve,
+			.Darken,
+			.Multiply,
+			.ColorBurn,
+			.LinearBurn,
+			.Lighten,
+			.Screen,
+			.ColorDodge,
+			.Add,
+			.Overlay,
+			.SoftLight,
+			.HardLight,
+			.Difference,
+			.Exclusion,
+			.Subtract,
+			.Divide,
+			.Hue,
+			.Saturation,
+			.Color,
+			.Luminosity]
 	}
 }

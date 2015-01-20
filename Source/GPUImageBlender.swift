@@ -17,7 +17,7 @@ public class GPUImageBlender: Blender {
 	private lazy var queue: NSOperationQueue = ({
 		() -> NSOperationQueue in
 		var queue =  NSOperationQueue()
-		queue.name = "BLNGPUImageBlender"
+		queue.name = "GPUImageBlender"
 		queue.maxConcurrentOperationCount = 1
 		return queue
 	})()
@@ -26,12 +26,13 @@ public class GPUImageBlender: Blender {
 	private var firstIngredient: BlendIngredient?
 	private var secondIngredient: BlendIngredient?
 	
-	init(name: String) {
+	public init(name: String) {
 		self.name = name
+		self.paused = false
 	}
 	
 	
-	// MARK: BLNBlender
+	// MARK: Blender
 	
 	public var firstImage: UIImage? {
 		get {
@@ -64,20 +65,23 @@ public class GPUImageBlender: Blender {
 			self.queue.suspended = newValue
 		}
 	}
-	public var name: String
 	
-	public var avalableFilters: [BLNFilter] {
-		return [BLNFilter]()
+	public private(set) var name: String
+	
+	public var avalableProcesses: [BlendProcess] {
+		return BlendProcess.all
 	}
-	public var currentlyBlending: [BLNFilter] {
+
+	
+	public var currentlyBlending: [GPUImageBlenderFilter] {
 		var operations:[GPUImageBlendOperation] =  self.queue.operations as [GPUImageBlendOperation]
 		return operations.map({
-			(op:GPUImageBlendOperation) -> BLNFilter in
+			(op:GPUImageBlendOperation) -> GPUImageBlenderFilter in
 			op.filter
 		})
 	}
 	
-	public func blend(filter: BLNFilter, failure fail:((NSError?) -> ())?, success succeed:((blend: BLNBlend) -> ())) {
+	public func blend(#filter: GPUImageBlenderFilter, failure fail:((error: NSError) -> ())?, success succeed:((blend: Blend<GPUImageBlenderFilter>) -> ())) {
 		if self.firstIngredient != nil && self.secondIngredient != nil {
 			let op = GPUImageBlendOperation(firstPicture: self.firstIngredient!.picture, secondPicture: self.secondIngredient!.picture, filter: filter)
 			
@@ -88,16 +92,17 @@ public class GPUImageBlender: Blender {
 			
 			op.completionBlock = {
 				()->() in
+				print("Completed")
 				if let blendedImage = op.blendedImage { // Success
-					let blend = BLNBlend(image: blendedImage, filter: filter, firstParentKey: firstKey, secondParentKey: secondKey, blenderName: weakSelf!.name)
-					dispatch_async(dispatch_get_main_queue(), { () -> Void in
+					let blend = Blend(image: blendedImage, filter: filter, firstParentKey: firstKey, secondParentKey: secondKey, blenderName: weakSelf!.name)
+//					dispatch_async(dispatch_get_main_queue(), { () -> Void in
 						succeed(blend: blend)
-					})
+//					})
 				} else if (fail != nil){ // Failure
 					let error = NSError(domain: "Blending failed", code: 1, userInfo: nil)
-					dispatch_async(dispatch_get_main_queue(), { () -> Void in
-						fail!(error)
-					})
+//					dispatch_async(dispatch_get_main_queue(), { () -> Void in
+						fail!(error: error)
+//					})
 				}
 			}
 			self.queue.addOperation(op)
@@ -105,13 +110,28 @@ public class GPUImageBlender: Blender {
 	}
 	public func stop() {
 		self.queue.cancelAllOperations()
+		self.paused = true
 	}
-	public func cancel(filters: [BLNFilter]) {
+	public func cancel(filters: [GPUImageBlenderFilter]) {
 		var operations: [GPUImageBlendOperation] = self.queue.operations as [GPUImageBlendOperation]
 		operations.filter({
 			(op: GPUImageBlendOperation) -> Bool in
 			return contains(filters, (op as GPUImageBlendOperation).filter)
 		}).map({$0.cancel()})
+	}
+}
+
+
+extension GPUImageBlender: Printable,DebugPrintable {
+	private var oneDescription: String {
+		return "<Blender: name:\(self.name),paused:\(self.paused),firstImage:\(self.firstImage)," +
+		"secondImage:\(self.secondImage),currentlyBlending:\(self.currentlyBlending)>"
+	}
+	public var description: String {
+		return self.oneDescription
+	}
+	public var debugDescription: String {
+		return self.oneDescription
 	}
 }
 
@@ -130,24 +150,26 @@ private struct BlendIngredient {
 private class GPUImageBlendOperation: NSOperation {
 	private(set) var firstPicture: GPUImagePicture
 	private(set) var secondPicture: GPUImagePicture
-	private(set) var filter: BLNFilter
+	private(set) var filter: GPUImageBlenderFilter
 	private(set) var blendedImage: UIImage?
 	
-	init(firstPicture: GPUImagePicture, secondPicture: GPUImagePicture, filter:BLNFilter) {
+	init(firstPicture: GPUImagePicture, secondPicture: GPUImagePicture, filter:GPUImageBlenderFilter) {
 		self.firstPicture = firstPicture
 		self.secondPicture = secondPicture
 		self.filter = filter
+		print("happened0")
 		super.init()
 	}
 	
 	private override func main() {
 		// Clarity with local vars
+		print("Happened1")
 		if (self.cancelled) {
 			return
 		}
 		let intensity = self.filter.intensity
 		let pictures = (self.firstPicture,self.secondPicture)
-		let generalFilter = self.filter.gpuImageFilter
+		let generalFilter = self.filter.type.gpuImageFilter
 		struct Holder {
 			static var alphaFilter = GPUImageAlphaBlendFilter()
 		}
@@ -162,7 +184,7 @@ private class GPUImageBlendOperation: NSOperation {
 		outputs.map({$0.removeAllTargets()})
 		
 		// set intensity
-		alphaFilter.mix = intensity
+		alphaFilter.mix = CGFloat(intensity.percentage)
 		
 		// first pass
 		if (self.cancelled) {
@@ -189,40 +211,6 @@ private class GPUImageBlendOperation: NSOperation {
 			return
 		}
 		self.blendedImage = alphaFilter.imageFromCurrentFramebuffer()
-	}
-}
-
-private extension BLNFilter {
-	var gpuImageFilter: GPUImageTwoInputFilter {
-		struct Holder {
-			static var library = LazyFilterLibrary()
-		}
-		let library = Holder.library
-		var filter:GPUImageTwoInputFilter
-		
-		switch(self) {
-		case .Dissolve: filter = library.dissolve
-		case .Darken: filter = library.darken
-		case .Multiply: filter = library.multiply
-		case .ColorBurn: filter = library.colorBurn
-		case .LinearBurn: filter = library.linearBurn
-		case .Lighten: filter = library.lighten
-		case .Screen: filter = library.screen
-		case .ColorDodge: filter = library.colordodge
-		case .Add: filter = library.add
-		case .Overlay: filter = library.overlay
-		case .SoftLight: filter = library.softLight
-		case .HardLight: filter = library.hardLight
-		case .Difference: filter = library.difference
-		case .Exclusion: filter = library.exclusion
-		case .Subtract: filter = library.subtract
-		case .Divide: filter = library.divide
-		case .Hue: filter = library.hue
-		case .Saturation: filter = library.saturation
-		case .Color: filter = library.color
-		case .Luminosity: filter = library.luminosity
-		}
-		return filter
 	}
 }
 
@@ -261,4 +249,68 @@ private class LazyFilterLibrary {
 	lazy var saturation = GPUImageSaturationBlendFilter()
 	lazy var color = GPUImageColorBlendFilter()
 	lazy var luminosity = GPUImageLuminosityBlendFilter()
+}
+
+
+
+public struct GPUImageBlenderFilter: Filter {
+	public var type: BlendProcess
+	public var intensity: Intensity
+	public init(type: BlendProcess, intensity: Intensity) {
+		self.type = type
+		self.intensity = intensity
+	}
+}
+
+extension GPUImageBlenderFilter: Hashable {
+	public var hashValue: Int {
+		return self.intensity.value.hashValue ^ self.type.hashValue
+	}
+}
+extension GPUImageBlenderFilter: Printable, DebugPrintable {
+	private var oneDescription: String {
+		return "<GPUImageBlenderFilter: type:\(self.type.rawValue), intensity:\(self.intensity.value)>"
+	}
+	public var description: String {
+		return oneDescription
+	}
+	public var debugDescription: String {
+		return oneDescription
+	}
+}
+
+private extension BlendProcess {
+	var gpuImageFilter: GPUImageTwoInputFilter {
+		struct Holder {
+			static var library = LazyFilterLibrary()
+		}
+		
+		let library = Holder.library
+		var filter: GPUImageTwoInputFilter
+		
+		switch(self) {
+			case .Dissolve: filter = library.dissolve
+			case .Darken: filter = library.darken
+			case .Multiply: filter = library.multiply
+			case .ColorBurn: filter = library.colorBurn
+			case .LinearBurn: filter = library.linearBurn
+			case .Lighten: filter = library.lighten
+			case .Screen: filter = library.screen
+			case .ColorDodge: filter = library.colordodge
+			case .Add: filter = library.add
+			case .Overlay: filter = library.overlay
+			case .SoftLight: filter = library.softLight
+			case .HardLight: filter = library.hardLight
+			case .Difference: filter = library.difference
+			case .Exclusion: filter = library.exclusion
+			case .Subtract: filter = library.subtract
+			case .Divide: filter = library.divide
+			case .Hue: filter = library.hue
+			case .Saturation: filter = library.saturation
+			case .Color: filter = library.color
+			case .Luminosity: filter = library.luminosity
+		}
+		
+		return filter
+	}
 }
