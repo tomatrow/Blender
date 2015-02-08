@@ -84,7 +84,7 @@ public class GPUImageBlender: Blender {
 	public func blend(#filter: GPUImageBlenderFilter, failure fail:((error: NSError) -> ())?, success succeed:((blend: Blend<GPUImageBlenderFilter>) -> ())) {
 		if self.firstIngredient != nil && self.secondIngredient != nil {
 			let op = GPUImageBlendOperation(firstPicture: self.firstIngredient!.picture, secondPicture: self.secondIngredient!.picture, filter: filter)
-			
+
 			weak var weakOp = op
 			weak var weakSelf = self
 			let firstKey = self.firstIngredient!.hash
@@ -92,17 +92,16 @@ public class GPUImageBlender: Blender {
 			
 			op.completionBlock = {
 				()->() in
-				print("Completed")
-				if let blendedImage = op.blendedImage { // Success
+				if let blendedImage = weakOp?.blendedImage { // Success
 					let blend = Blend(image: blendedImage, filter: filter, firstParentKey: firstKey, secondParentKey: secondKey, blenderName: weakSelf!.name)
-//					dispatch_async(dispatch_get_main_queue(), { () -> Void in
+					dispatch_async(dispatch_get_main_queue(), { () -> Void in
 						succeed(blend: blend)
-//					})
+					})
 				} else if (fail != nil){ // Failure
 					let error = NSError(domain: "Blending failed", code: 1, userInfo: nil)
-//					dispatch_async(dispatch_get_main_queue(), { () -> Void in
+					dispatch_async(dispatch_get_main_queue(), { () -> Void in
 						fail!(error: error)
-//					})
+					})
 				}
 			}
 			self.queue.addOperation(op)
@@ -122,7 +121,7 @@ public class GPUImageBlender: Blender {
 }
 
 
-extension GPUImageBlender: Printable,DebugPrintable {
+extension GPUImageBlender: Printable, DebugPrintable {
 	private var oneDescription: String {
 		return "<Blender: name:\(self.name),paused:\(self.paused),firstImage:\(self.firstImage)," +
 		"secondImage:\(self.secondImage),currentlyBlending:\(self.currentlyBlending)>"
@@ -157,13 +156,11 @@ private class GPUImageBlendOperation: NSOperation {
 		self.firstPicture = firstPicture
 		self.secondPicture = secondPicture
 		self.filter = filter
-		print("happened0")
 		super.init()
 	}
 	
 	private override func main() {
 		// Clarity with local vars
-		print("Happened1")
 		if (self.cancelled) {
 			return
 		}
@@ -210,6 +207,7 @@ private class GPUImageBlendOperation: NSOperation {
 		if (self.cancelled) {
 			return
 		}
+		alphaFilter.useNextFrameForImageCapture()
 		self.blendedImage = alphaFilter.imageFromCurrentFramebuffer()
 	}
 }
