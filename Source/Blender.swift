@@ -131,7 +131,7 @@ public enum BlendProcess: String {
 		Color = "Color",
 		Luminosity = "Luminosity"
 	
-	static var all: [BlendProcess] {
+	public static var all: [BlendProcess] {
 		return [.Dissolve,
 			.Darken,
 			.Multiply,
